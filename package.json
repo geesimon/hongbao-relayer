@@ -1,0 +1,17 @@
+{
+  "name": "hongbao-relayer",
+  "version": "0.0.1",
+  "description": "Hongbao Relayer",
+  "main": "app.js",
+  "scripts": {
+    "start": "npx nodemon app.js"
+  },
+  "author": "geesimon",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.1"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.16"
+  }
+}
