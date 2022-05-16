@@ -9,10 +9,11 @@ const RelayerWallet = new ethers.Wallet(RELAYER_PRIVATE_KEY, EtherProvider);
 
 let RelayerAddress; 
 RelayerWallet.getAddress().then(_addr => {
-  RelayerAddress = _addr;
+  RelayerAddress = ethers.BigNumber.from(_addr).toString();
 })
 
 const fs = require('fs');
+const { nextTick } = require('process');
 const ETHHongbaoAbi = JSON.parse(fs.readFileSync('ETHHongbao.json')).abi;
 
 const {ETHHongbaoAddresses, ETHHongbaoFees} = process.env;
@@ -21,7 +22,7 @@ const HongbaoAddress2Fee = (_addresses, _fees) =>{
   const fees = _fees.split(',').map(f => f.trim());
 
   _addresses.split(',').forEach((addr, k) => {
-    res[addr] = Number(fees[k]);
+    res[addr] = ethers.utils.parseEther(fees[k])
   })
   
   return res;
@@ -32,9 +33,9 @@ const ETHHongbaoAddress2Fee = HongbaoAddress2Fee(ETHHongbaoAddresses, ETHHongbao
 const app = express();
 const {PORT} = process.env;
 
-const error = (_status, _msg) => {
+const error = (_code, _msg) => {
     var err = new Error(_msg);
-    err.status = _status;
+    err.code = _code;
 
     return err;
 }
@@ -50,37 +51,53 @@ app.get('/address', async (req, res) => {
   res.send(RelayerAddress);
 })
 
-app.post('/api/relay', async (req, res, next) => {
-    const {proofData, publicSignals, hongbaoAddress} = req.body;
+app.get('/config', async (req, res) => {
+  res.send(ETHHongbaoAddress2Fee);
+})
 
-    console.log(proofData, publicSignals, hongbaoAddress);
+app.post('/api/relay', async (req, res, next) => {
+    const t_start = new Date();
+
+    const {proofData, publicSignals, hongbaoAddress} = req.body;
+    // console.log(proofData, publicSignals, hongbaoAddress);
+    
     if (ETHHongbaoAddress2Fee.hasOwnProperty(hongbaoAddress)){
       if (RelayerAddress === publicSignals[3]){
-        if (ETHHongbaoAddress2Fee[hongbaoAddress] === Number(publicSignals[publicSignals])){
+        if (ETHHongbaoAddress2Fee[hongbaoAddress].toString() === publicSignals[4]){
+          console.log('Start submitting proof...')
           hongbaoContract = new ethers.Contract(hongbaoAddress, ETHHongbaoAbi, RelayerWallet);
-          const tx = await hongbaoContract.withdraw(proofData, publicSignals);
-          const receipt = await tx.wait();
-          console.log(receipt);
-          next(error(200, "OK"));  
+          try {
+            // proofData[0] = proofData[1];
+            const tx = await hongbaoContract.withdraw(proofData, publicSignals);
+            const receipt = await tx.wait();
+            
+            // console.log(receipt);
+            res.send(error(0, "OK"));
+          } catch(e){
+            next(error(104, "Proof Verification Failed"))
+          }
         } else {
-          next(error(500, "Wrong Fee"));  
+          next(error(103, "Wrong Fee"));  
         }
       } else {
-        next(error(500, "Wrong Relayer"));
+        next(error(102, "Wrong Relayer"));
       }
     } else {
-      next(error(500, "Bad Hongbao Contract"));
+      next(error(101, "Bad Hongbao Contract"));
     }
+
+    const t_end = new Date();
+    console.log('Seconds Elapsed:', (t_end - t_start) / 1000);
 })
 
 app.use(function(err, req, res, next){
-    res.status(err.status || 500);
-    res.send({ error: err.message });
+    res.status(500);
+    res.send({ code: err.code, error: err.message });
   });
 
 app.use(function(req, res){
     res.status(404);
-    res.send({ error: "Sorry, can't find that" })
+    res.send({ code: 404, error: "Sorry, can't find that" })
 });
 
 app.listen(PORT, () => {
