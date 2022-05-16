@@ -16,7 +16,7 @@ const fs = require('fs');
 const { nextTick } = require('process');
 const ETHHongbaoAbi = JSON.parse(fs.readFileSync('ETHHongbao.json')).abi;
 
-const {ETHHongbaoAddresses, ETHHongbaoFees} = process.env;
+const {ETH_HONGBAO_ADDRESSES, ETH_HONGBAO_FEES} = process.env;
 const HongbaoAddress2Fee = (_addresses, _fees) =>{
   let res = {};
   const fees = _fees.split(',').map(f => f.trim());
@@ -28,7 +28,7 @@ const HongbaoAddress2Fee = (_addresses, _fees) =>{
   return res;
 }
 
-const ETHHongbaoAddress2Fee = HongbaoAddress2Fee(ETHHongbaoAddresses, ETHHongbaoFees);
+const ETHHongbaoAddress2Fee = HongbaoAddress2Fee(ETH_HONGBAO_ADDRESSES, ETH_HONGBAO_FEES);
 
 const app = express();
 const {PORT} = process.env;
