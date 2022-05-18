@@ -13,7 +13,6 @@ RelayerWallet.getAddress().then(_addr => {
 })
 
 const fs = require('fs');
-const { nextTick } = require('process');
 const ETHHongbaoAbi = JSON.parse(fs.readFileSync('ETHHongbao.json')).abi;
 
 const {ETH_HONGBAO_ADDRESSES, ETH_HONGBAO_FEES} = process.env;
