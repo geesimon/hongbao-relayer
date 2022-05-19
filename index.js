@@ -1,7 +1,6 @@
-
 const fs = require('fs');
-
 const { ethers } = require("ethers");
+const snarkjs = require('snarkjs');
 const {CHAIN_URL, RELAYER_PRIVATE_KEY} = process.env;
 
 const {ETH_HONGBAO_ADDRESSES, ETH_HONGBAO_FEES} = process.env;
@@ -20,6 +19,7 @@ let RelayerWallet;
 let ETHHongbaoAddress2Fee;
 let ETHHongbaoAbi;
 let RelayerAddress; 
+let VerificationKey;
 
 exports.initializer = (context, callback) => {
     console.log('initializing');
@@ -33,50 +33,62 @@ exports.initializer = (context, callback) => {
         RelayerAddress = ethers.BigNumber.from(_addr).toString();
     })
 
+    VerificationKey = JSON.parse(fs.readFileSync("withdraw_verification_key.json"));
+
     callback(null, '');
 };
 
-const error = (_code, _msg) => {
-    var err = new Error(_msg);
-    err.code = _code;
+class VerificationError extends Error {
+  constructor(_code, _message) {
+    super(_message);
+    this.code = _code; 
+  }
+}
 
-    return err;
+const unpackProofData = (_proofData) => {
+    return {
+        pi_a:[_proofData[0], _proofData[1], "1"],
+        pi_b:[[_proofData[3], _proofData[2]], [_proofData[5], _proofData[4]], ["1", "0"]],
+        pi_c:[_proofData[6], _proofData[7], "1"],        
+        protocol: "groth16", 
+        curve: "bn128"
+    }
 }
 
 exports.handler = async (req, resp, context) => {
-    let err = error(0, "OK");
-
     const {proofData, publicSignals, hongbaoAddress} = JSON.parse(req.body.toString());
     // console.log(proofData, publicSignals, hongbaoAddress, RelayerAddress);
-    
-    if (ETHHongbaoAddress2Fee.hasOwnProperty(hongbaoAddress)){
-      if (RelayerAddress === publicSignals[3]){
-        if (ETHHongbaoAddress2Fee[hongbaoAddress].toString() === publicSignals[4]){
-          hongbaoContract = new ethers.Contract(hongbaoAddress, ETHHongbaoAbi, RelayerWallet);
-          try {
-            // proofData[0] = proofData[1];
+    let res = {code: 0, message: "OK"};
+
+    try{
+        if (!ETHHongbaoAddress2Fee.hasOwnProperty(hongbaoAddress))
+            throw new VerificationError(101, 'Bad Hongbao Contract');
+        // console.log(RelayerAddress, publicSignals[3]);
+        if (!(RelayerAddress === publicSignals[3]))
+            throw new VerificationError(102, 'Wrong Relayer');
+        if (!(ETHHongbaoAddress2Fee[hongbaoAddress].toString() === publicSignals[4]))
+            throw new VerificationError(103, 'Wrong Fee');
+
+        const proof = unpackProofData(proofData);
+        if (!(await snarkjs.groth16.verify(VerificationKey, publicSignals, proof)))
+            throw new VerificationError(104, 'Proofdata is Invalid');
+
+        hongbaoContract = new ethers.Contract(hongbaoAddress, ETHHongbaoAbi, RelayerWallet);
+        try {
             const tx = await hongbaoContract.withdraw(proofData, publicSignals);
-            const receipt = await tx.wait();                        
-            err = error(0, "OK");
-          } catch(e){
-                console.log(e);
-                err = error(104, "Proof Verification Failed");
-          }
-        } else {
-            err = error(103, "Wrong Fee");
+            const receipt = await tx.wait();
+        } catch(err){
+            console.log(err);
+            throw new VerificationError(105, 'Proof Verification Failed');
         }
-      } else {
-            err = error(102, "Wrong Relayer");
-      }
-    } else {
-        err = error(101, "Bad Hongbao Contract");
+
+        resp.setStatusCode(200);
+    } catch(err){
+        res.code = err.code;
+        res.message = err.message;
+        resp.setStatusCode(500);
     }
 
     resp.setHeader("Content-Type", "application/json");
-    if (err.code !== 0){
-        resp.setStatusCode(500);
-    } else {
-        resp.setStatusCode(200);
-    }
-    resp.send(JSON.stringify({code: err.code, error: err.message }));
+    resp.send(JSON.stringify(res));
 }
