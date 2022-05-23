@@ -6,15 +6,14 @@ const fs = require('fs');
 const { ethers } = require("ethers");
 const snarkjs = require('snarkjs');
 const {
-        CHAIN_URL, 
-        RELAYER_PRIVATE_KEY, 
+        RELAYER_ADDRESS, 
         OSS_REGION,
         OSS_BUCKET,
         OSS_ACCESSKEY_SECRET, 
-        OSS_ACCESSKEY_ID
+        OSS_ACCESSKEY_ID,
+        ETH_HONGBAO_FEES
         } = process.env;
 
-const {ETH_HONGBAO_ADDRESSES, ETH_HONGBAO_FEES} = process.env;
 const HongbaoAddress2Fee = (_addresses, _fees) =>{
   let res = {};
   const fees = _fees.split(',').map(f => f.trim());
@@ -26,21 +25,19 @@ const HongbaoAddress2Fee = (_addresses, _fees) =>{
   return res;
 }
 
-let ETHHongbaoAddress2Fee;
-let RelayerAddress; 
+let ETHHongbaoAddress2Fee = {};
 let VerificationKey;
 let OSSClient;
 
 exports.initializer = (context, callback) => {
     console.log('initializing');
-    const EtherProvider = new ethers.providers.JsonRpcProvider(CHAIN_URL);
-    const RelayerWallet = new ethers.Wallet(RELAYER_PRIVATE_KEY, EtherProvider);
 
-    ETHHongbaoAddress2Fee = HongbaoAddress2Fee(ETH_HONGBAO_ADDRESSES, ETH_HONGBAO_FEES);
-    
-    RelayerWallet.getAddress().then(_addr => {
-        RelayerAddress = ethers.BigNumber.from(_addr).toString();
-    })
+    if( process.env.ETH_HONGBAO_ADDRESSES_MAIN !== undefined){
+        ETHHongbaoAddress2Fee['main'] = HongbaoAddress2Fee(process.env.ETH_HONGBAO_ADDRESSES_MAIN, ETH_HONGBAO_FEES)
+    }
+    if (process.env.ETH_HONGBAO_ADDRESSES_TEST !== undefined){
+        ETHHongbaoAddress2Fee['test'] = HongbaoAddress2Fee(process.env.ETH_HONGBAO_ADDRESSES_TEST, ETH_HONGBAO_FEES)
+    }
 
     VerificationKey = JSON.parse(fs.readFileSync("withdraw_verification_key.json"));
     
@@ -86,17 +83,19 @@ const isFileExist = async (_fileName, _options = {}) => {
 }
 
 exports.handler = async (req, resp, context) => {
-    const {proofData, publicSignals, hongbaoAddress} = JSON.parse(req.body.toString());
+    const {env, proofData, publicSignals, hongbaoAddress} = JSON.parse(req.body.toString());
     // console.log(proofData, publicSignals, hongbaoAddress, RelayerAddress);
     let res = {code: 0, message: "OK"};
 
     try{
-        if (!ETHHongbaoAddress2Fee.hasOwnProperty(hongbaoAddress))
+        if (env === undefined || !ETHHongbaoAddress2Fee.hasOwnProperty(env))
+            throw new VerificationError(100, `Specified Wrong Environment {${env}}`);
+        if (!ETHHongbaoAddress2Fee[env].hasOwnProperty(hongbaoAddress))
             throw new VerificationError(101, 'Bad Hongbao Contract');
         // console.log(RelayerAddress, publicSignals[3]);
-        if (!(RelayerAddress === publicSignals[3]))
+        if (!(ethers.BigNumber.from(RELAYER_ADDRESS).toString() === publicSignals[3]))
             throw new VerificationError(102, 'Wrong Relayer');
-        if (!(ETHHongbaoAddress2Fee[hongbaoAddress].toString() === publicSignals[4]))
+        if (!(ETHHongbaoAddress2Fee[env][hongbaoAddress].toString() === publicSignals[4]))
             throw new VerificationError(103, 'Wrong Fee');
 
         const proof = unpackProofData(proofData);
@@ -104,9 +103,10 @@ exports.handler = async (req, resp, context) => {
             throw new VerificationError(104, 'Proofdata is Invalid');
 
         const submitObject = {
-                HongbaoAddress: hongbaoAddress,
-                ProofData: proofData,
-                PublicSignals: publicSignals
+                env: env,
+                hongbaoAddress: hongbaoAddress,
+                proofData: proofData,
+                publicSignals: publicSignals
         }
         const fileName = 'pickup/' + publicSignals[1] + ".json";
         if (await isFileExist(fileName))
@@ -118,14 +118,12 @@ exports.handler = async (req, resp, context) => {
             console.log(err);
             throw new VerificationError(107, 'Failed to Write OSS');
         }
-        
-        resp.setStatusCode(200);
     } catch(err){
         res.code = err.code;
         res.message = err.message;
-        resp.setStatusCode(500);
     }
 
+    resp.setStatusCode(200);
     resp.setHeader("Content-Type", "application/json");
     resp.send(JSON.stringify(res));
 }

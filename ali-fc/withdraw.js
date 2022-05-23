@@ -5,7 +5,6 @@ const OSS = require('ali-oss')
 const fs = require('fs');
 const { ethers } = require("ethers");
 const {
-        CHAIN_URL,
         RELAYER_PRIVATE_KEY, 
         OSS_REGION,
         OSS_BUCKET,
@@ -13,27 +12,22 @@ const {
         OSS_ACCESSKEY_ID
         } = process.env;
 
-const {ETH_HONGBAO_ADDRESSES, ETH_HONGBAO_FEES} = process.env;
-
-let RelayerWallet;
 let ETHHongbaoAbi;
-let RelayerAddress; 
-let VerificationKey;
 let OSSClient;
+let ChainURL = {};
 
 exports.initializer = (context, callback) => {
     console.log('initializing');
-    const EtherProvider = new ethers.providers.JsonRpcProvider(CHAIN_URL);
-    RelayerWallet = new ethers.Wallet(RELAYER_PRIVATE_KEY, EtherProvider);
 
     ETHHongbaoAbi = JSON.parse(fs.readFileSync('ETHHongbao.json')).abi;
-    
-    RelayerWallet.getAddress().then(_addr => {
-        RelayerAddress = ethers.BigNumber.from(_addr).toString();
-    })
 
-    VerificationKey = JSON.parse(fs.readFileSync("withdraw_verification_key.json"));
-    
+    if (process.env.CHAIN_URL_MAIN !== undefined){
+        ChainURL['main'] = process.env.CHAIN_URL_MAIN;
+    }
+    if (process.env.CHAIN_URL_TEST !== undefined){
+        ChainURL['test'] = process.env.CHAIN_URL_TEST;
+    }
+
     OSSClient = new OSS({
                             region: OSS_REGION,
                             bucket: OSS_BUCKET,
@@ -58,9 +52,12 @@ exports.handler = async (event, context, callback) => {
         const fileContent = await OSSClient.get(file.name);
         const submitObject = JSON.parse(fileContent.content.toString());
 
-        hongbaoContract = new ethers.Contract(submitObject.HongbaoAddress, ETHHongbaoAbi, RelayerWallet);
         try {
-            const tx = await hongbaoContract.withdraw(submitObject.ProofData, submitObject.PublicSignals);
+            const EtherProvider = new ethers.providers.JsonRpcProvider(ChainURL[submitObject.env]);
+            const RelayerWallet = new ethers.Wallet(RELAYER_PRIVATE_KEY, EtherProvider);
+            const hongbaoContract = new ethers.Contract(submitObject.hongbaoAddress, ETHHongbaoAbi, RelayerWallet);
+
+            const tx = await hongbaoContract.withdraw(submitObject.proofData, submitObject.publicSignals);
             const receipt = await tx.wait();
         } catch(err){
             console.log(err);
